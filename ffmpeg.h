@@ -557,5 +557,7 @@ int vdpau_init(AVCodecContext *s);
 int dxva2_init(AVCodecContext *s);
 int vda_init(AVCodecContext *s);
 int videotoolbox_init(AVCodecContext *s);
-
+#if TARGET_OS_IPHONE
+int ffmpeg_main(int argc, char **argv);
+#endif
 #endif /* FFMPEG_H */

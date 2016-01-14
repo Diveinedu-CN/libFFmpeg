@@ -30,7 +30,7 @@
    references to libraries that are not being built. */
 
 #include "config.h"
-#include "compat/va_copy.h"
+//#include "compat/va_copy.h"
 #include "libavformat/avformat.h"
 #include "libavfilter/avfilter.h"
 #include "libavdevice/avdevice.h"
@@ -113,13 +113,22 @@ void register_exit(void (*cb)(int ret))
     program_exit = cb;
 }
 
+#if TARGET_OS_IPHONE
 void exit_program(int ret)
 {
     if (program_exit)
         program_exit(ret);
-
+    extern int received_sigterm;
+    received_sigterm = 1;
+}
+#else
+void exit_program(int ret)
+{
+    if (program_exit)
+        program_exit(ret);
     exit(ret);
 }
+#endif
 
 double parse_number_or_die(const char *context, const char *numstr, int type,
                            double min, double max)

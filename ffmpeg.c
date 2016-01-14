@@ -49,7 +49,6 @@
 #include "libavutil/parseutils.h"
 #include "libavutil/samplefmt.h"
 #include "libavutil/fifo.h"
-#include "libavutil/internal.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/dict.h"
 #include "libavutil/mathematics.h"
@@ -108,6 +107,27 @@
 #include "cmdutils.h"
 
 #include "libavutil/avassert.h"
+
+#if HAVE_PRAGMA_DEPRECATED
+#    if defined(__ICL) || defined (__INTEL_COMPILER)
+#        define FF_DISABLE_DEPRECATION_WARNINGS __pragma(warning(push)) __pragma(warning(disable:1478))
+#        define FF_ENABLE_DEPRECATION_WARNINGS  __pragma(warning(pop))
+#    elif defined(_MSC_VER)
+#        define FF_DISABLE_DEPRECATION_WARNINGS __pragma(warning(push)) __pragma(warning(disable:4996))
+#        define FF_ENABLE_DEPRECATION_WARNINGS  __pragma(warning(pop))
+#    else
+#        define FF_DISABLE_DEPRECATION_WARNINGS _Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
+#        define FF_ENABLE_DEPRECATION_WARNINGS  _Pragma("GCC diagnostic warning \"-Wdeprecated-declarations\"")
+#    endif
+#else
+#    define FF_DISABLE_DEPRECATION_WARNINGS
+#    define FF_ENABLE_DEPRECATION_WARNINGS
+#endif
+#ifdef DEBUG
+#   define ff_dlog(ctx, ...) av_log(ctx, AV_LOG_DEBUG, __VA_ARGS__)
+#else
+#   define ff_dlog(ctx, ...) do { if (0) av_log(ctx, AV_LOG_DEBUG, __VA_ARGS__); } while (0)
+#endif
 
 const char program_name[] = "ffmpeg";
 const int program_birth_year = 2000;
@@ -314,7 +334,7 @@ void term_exit(void)
     term_exit_sigsafe();
 }
 
-static volatile int received_sigterm = 0;
+volatile int received_sigterm = 0;
 static volatile int received_nb_signals = 0;
 static volatile int transcode_init_done = 0;
 static volatile int ffmpeg_exited = 0;
@@ -330,7 +350,7 @@ sigterm_handler(int sig)
         write(2/*STDERR_FILENO*/, "Received > 3 system signals, hard exiting\n",
                            strlen("Received > 3 system signals, hard exiting\n"));
 
-        exit(123);
+//        exit(123);
     }
 }
 
@@ -582,6 +602,11 @@ static void ffmpeg_cleanup(int ret)
     }
     term_exit();
     ffmpeg_exited = 1;
+    nb_filtergraphs=0;
+    nb_output_files=0;
+    nb_output_streams=0;
+    nb_input_files=0;
+    nb_input_streams=0;
 }
 
 void remove_avoptions(AVDictionary **a, AVDictionary *b)
@@ -4111,12 +4136,21 @@ static int64_t getmaxrss(void)
 static void log_callback_null(void *ptr, int level, const char *fmt, va_list vl)
 {
 }
-
+#if TARGET_OS_IPHONE
+int ffmpeg_main(int argc, char **argv)
+#else
 int main(int argc, char **argv)
+#endif
 {
     int ret;
     int64_t ti;
-
+#if TARGET_OS_IPHONE
+    received_sigterm = 0;
+    received_nb_signals = 0;
+    transcode_init_done = 0;
+    ffmpeg_exited = 0;
+    main_return_code = 0;
+#endif
     register_exit(ffmpeg_cleanup);
 
     setvbuf(stderr,NULL,_IONBF,0); /* win32 runtime needs this */
@@ -4125,7 +4159,7 @@ int main(int argc, char **argv)
     parse_loglevel(argc, argv, options);
 
     if(argc>1 && !strcmp(argv[1], "-d")){
-        run_as_daemon=1;
+        run_as_daemon=0;
         av_log_set_callback(log_callback_null);
         argc--;
         argv++;
@@ -4146,18 +4180,29 @@ int main(int argc, char **argv)
     /* parse options and open all input/output files */
     ret = ffmpeg_parse_options(argc, argv);
     if (ret < 0)
+#if TARGET_OS_IPHONE
+        goto end;
+#else
         exit_program(1);
-
+#endif
     if (nb_output_files <= 0 && nb_input_files == 0) {
         show_usage();
         av_log(NULL, AV_LOG_WARNING, "Use -h to get full help or, even better, run 'man %s'\n", program_name);
+#if TARGET_OS_IPHONE
+        goto end;
+#else
         exit_program(1);
+#endif
     }
 
     /* file converter / grab */
     if (nb_output_files <= 0) {
         av_log(NULL, AV_LOG_FATAL, "At least one output file must be specified\n");
+#if TARGET_OS_IPHONE
+        goto end;
+#else
         exit_program(1);
+#endif
     }
 
 //     if (nb_input_files == 0) {
@@ -4165,18 +4210,26 @@ int main(int argc, char **argv)
 //         exit_program(1);
 //     }
 
-    current_time = ti = getutime();
+    current_time = ti = (int)getutime();
     if (transcode() < 0)
-        exit_program(1);
+#if TARGET_OS_IPHONE
+        goto end;
+#else
+    exit_program(1);
+#endif
     ti = getutime() - ti;
     if (do_benchmark) {
         av_log(NULL, AV_LOG_INFO, "bench: utime=%0.3fs\n", ti / 1000000.0);
     }
     av_log(NULL, AV_LOG_DEBUG, "%"PRIu64" frames successfully decoded, %"PRIu64" decoding errors\n",
            decode_error_stat[0], decode_error_stat[1]);
+#if !TARGET_OS_IPHONE
     if ((decode_error_stat[0] + decode_error_stat[1]) * max_error_rate < decode_error_stat[1])
         exit_program(69);
 
     exit_program(received_nb_signals ? 255 : main_return_code);
+#endif
+end:
+    ffmpeg_cleanup(0);
     return main_return_code;
 }
